@@ -281,3 +281,161 @@ async function monitorPrivateChannels(bot) {
 }
 
 const bot = new Telegraf(BOT_TOKEN);
+bot.command('start', async (ctx) => {
+    const userId = ctx.from.id;
+    initUser(userId, ctx.from.username, ctx.from.first_name);
+    await ctx.reply(
+        `🤖 *YouTube to Telegram Bot*\n\nWelcome ${ctx.from.first_name || 'User'}! 👋\n\n` +
+        `📋 *Quick Setup:*\n` +
+        `1. /setapikey YOUR_API_KEY\n` +
+        `2. /setchannel @yourchannel\n` +
+        `3. /setprivate -1001234567890\n` +
+        `4. /addchannel UCxxxxxx\n` +
+        `5. /settitle "Your title here"\n` +
+        `6. /startmonitor\n\n` +
+        `📹 *Auto Video:* Upload to private channel → Auto-added!\n` +
+        `📝 *Title:* Use /settitle to add title before each video\n` +
+        `🔤 *Placeholders:* {channel} {title} {date} {time} {user}\n\n` +
+        `/help for all commands`,
+        { parse_mode: 'Markdown' }
+    );
+});
+
+bot.command('help', async (ctx) => {
+    await ctx.reply(
+        `🤖 *Commands*\n\n` +
+        `🔑 /setapikey <key> - Set YouTube API key\n` +
+        `📤 /setchannel <id> - Set your channel\n` +
+        `📥 /setprivate <id> - Set private channel\n` +
+        `🎯 /addchannel <id> - Add YouTube channel\n` +
+        `📝 /settitle <text> - Set title before video\n` +
+        `🗑️ /cleartitle - Remove title\n` +
+        `👁️ /showtitle - Show current title\n` +
+        `📦 /supply - Check remaining videos\n` +
+        `🟢 /startmonitor - Start monitoring\n` +
+        `🔴 /stopmonitor - Stop monitoring\n` +
+        `📊 /status - Bot status\n` +
+        `👤 /stats - Your stats\n` +
+        `🆔 /myid - Your ID\n\n` +
+        `🔤 *Placeholders:*\n` +
+        `{channel} - YouTube channel ID\n` +
+        `{title} - YouTube video title\n` +
+        `{date} - Current date\n` +
+        `{time} - Current time\n` +
+        `{user} - Your username`,
+        { parse_mode: 'Markdown' }
+    );
+});
+
+bot.command('myid', async (ctx) => {
+    await ctx.reply(`🆔 Your ID: \`${ctx.from.id}\``, { parse_mode: 'Markdown' });
+});
+
+bot.command('stats', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    await ctx.reply(
+        `📊 *Your Stats*\n\n` +
+        `• Videos in supply: ${user.videoSupply.length}\n` +
+        `• Total posts: ${user.totalPosts || 0}\n` +
+        `• Today's posts: ${user.dailyPosts}\n` +
+        `• Daily limit: ${user.dailyLimit === null ? 'Unlimited' : user.dailyLimit}\n` +
+        `• Monitoring: ${user.settings.isMonitoring ? '🟢 Active' : '🔴 Stopped'}\n` +
+        `• Auto-add: ${user.settings.autoAddVideos ? '✅ ON' : '❌ OFF'}`,
+        { parse_mode: 'Markdown' }
+    );
+});
+
+bot.command('settitle', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const title = ctx.message.text.replace('/settitle', '').trim();
+    if (!title) {
+        return ctx.reply('Usage: /settitle Your title here\n\nPlaceholders: {channel} {title} {date} {time} {user}\n\nExample: /settitle 🔥 New video from {channel}');
+    }
+    user.settings.defaultTitle = title;
+    saveUserData();
+    await ctx.reply(`✅ Title set!\n\nPreview: ${title.replace(/{.*?}/g, 'EXAMPLE')}\n\nThis will be sent BEFORE each video.`);
+});
+
+bot.command('showtitle', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    if (user.settings.defaultTitle) {
+        await ctx.reply(`📝 *Current title:*\n\n${user.settings.defaultTitle}`, { parse_mode: 'Markdown' });
+    } else {
+        await ctx.reply('📝 No title set. Use /settitle to add a title before videos.');
+    }
+});
+
+bot.command('cleartitle', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    user.settings.defaultTitle = null;
+    saveUserData();
+    await ctx.reply('✅ Title cleared! Videos will be posted without any title.');
+});
+
+bot.command('setapikey', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply('Usage: /setapikey YOUR_API_KEY');
+    user.settings.youtubeApiKey = args[1];
+    saveUserData();
+    await ctx.reply('✅ YouTube API key saved!');
+});
+
+bot.command('setchannel', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply('Usage: /setchannel @channel OR -1001234567890');
+    user.settings.yourChannelId = args[1].startsWith('@') ? args[1] : parseInt(args[1]);
+    saveUserData();
+    await ctx.reply(`✅ Your channel set to: ${user.settings.yourChannelId}`);
+});
+
+bot.command('setprivate', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply('Usage: /setprivate -1001234567890\n\nGet ID by forwarding a message from your private channel to @userinfobot');
+    user.settings.privateChannelId = parseInt(args[1]);
+    saveUserData();
+    await ctx.reply(`✅ Private channel set! Bot will auto-detect videos you upload here.`);
+    await scanPrivateChannel(bot, ctx.from.id);
+});
+
+bot.command('setlimit', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply('Usage: /setlimit 10 (0 = unlimited)');
+    const limit = parseInt(args[1]);
+    user.dailyLimit = limit === 0 ? null : limit;
+    saveUserData();
+    await ctx.reply(`✅ Daily limit: ${user.dailyLimit === null ? 'Unlimited' : user.dailyLimit}`);
+});
+
+bot.command('addchannel', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply('Usage: /addchannel UCxxxxxx\n\nGet YouTube channel ID from @youtube_channel_id_bot');
+    if (!user.settings.youtubeApiKey) return ctx.reply('❌ Set API key first: /setapikey');
+    const channelId = args[1];
+    if (user.monitoredChannels.includes(channelId)) return ctx.reply('❌ Already monitoring');
+    user.monitoredChannels.push(channelId);
+    saveUserData();
+    await ctx.reply(`✅ Added ${channelId} | Total: ${user.monitoredChannels.length}`);
+});
+
+bot.command('removechannel', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply('Usage: /removechannel UCxxxxxx');
+    const index = user.monitoredChannels.indexOf(args[1]);
+    if (index === -1) return ctx.reply('❌ Channel not found');
+    user.monitoredChannels.splice(index, 1);
+    delete user.lastVideoIds[args[1]];
+    saveUserData();
+    await ctx.reply(`✅ Removed | Total: ${user.monitoredChannels.length}`);
+});
+
+bot.command('listchannels', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    if (user.monitoredChannels.length === 0) return ctx.reply('No channels monitored');
+    await ctx.reply(`🎯 *Monitored Channels:*\n${user.monitoredChannels.map((id, i) => `${i+1}. ${id}`).join('\n')}`, { parse_mode: 'Markdown' });
+});
