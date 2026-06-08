@@ -439,3 +439,148 @@ bot.command('listchannels', async (ctx) => {
     if (user.monitoredChannels.length === 0) return ctx.reply('No channels monitored');
     await ctx.reply(`🎯 *Monitored Channels:*\n${user.monitoredChannels.map((id, i) => `${i+1}. ${id}`).join('\n')}`, { parse_mode: 'Markdown' });
 });
+bot.command('supply', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    let supplyText = `📦 *Video Supply:* ${user.videoSupply.length} videos\n\n`;
+    if (user.videoSupply.length > 0) {
+        const next = user.videoSupply[0];
+        supplyText += `🎯 *Next video ID:* ${next.messageId}\n`;
+        supplyText += `📝 *Title:* ${next.title ? next.title.substring(0, 50) + (next.title.length > 50 ? '...' : '') : 'None'}\n\n`;
+        supplyText += `💡 *Tip:* Upload new videos to your private channel - they auto-add to the end of queue!`;
+    } else {
+        supplyText += `📭 *No videos in supply*\n\n💡 *Tip:* Upload videos to your private channel and they will auto-add here!`;
+    }
+    await ctx.reply(supplyText, { parse_mode: 'Markdown' });
+});
+
+bot.command('clearsupply', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const removed = user.videoSupply.length;
+    user.videoSupply = [];
+    saveUserData();
+    await ctx.reply(`🔄 Cleared ${removed} videos from supply.`);
+});
+
+bot.command('autoaddon', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    user.settings.autoAddVideos = true;
+    saveUserData();
+    await ctx.reply(`✅ Auto-add videos ENABLED\n\nVideos you upload to private channel will be auto-added.`);
+});
+
+bot.command('autoaddoff', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    user.settings.autoAddVideos = false;
+    saveUserData();
+    await ctx.reply(`❌ Auto-add videos DISABLED`);
+});
+
+bot.command('setinterval', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply(`Current: ${user.settings.monitorInterval}s`);
+    const interval = parseInt(args[1]);
+    if (isNaN(interval) || interval < 10) return ctx.reply('❌ Minimum 10 seconds');
+    user.settings.monitorInterval = interval;
+    saveUserData();
+    await ctx.reply(`✅ Check interval: ${interval}s`);
+});
+
+bot.command('setdelay', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply(`Current: ${user.settings.postDelay}s`);
+    const delay = parseInt(args[1]);
+    if (isNaN(delay) || delay < 0) return ctx.reply('❌ Invalid');
+    user.settings.postDelay = delay;
+    saveUserData();
+    await ctx.reply(`✅ Post delay: ${delay}s`);
+});
+
+bot.command('status', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    await ctx.reply(
+        `🤖 *Bot Status*\n\n` +
+        `🔑 API Key: ${user.settings.youtubeApiKey ? '✅ Set' : '❌ Not set'}\n` +
+        `📤 Your channel: ${user.settings.yourChannelId || '❌ Not set'}\n` +
+        `📥 Private channel: ${user.settings.privateChannelId || '❌ Not set'}\n` +
+        `📝 Default title: ${user.settings.defaultTitle ? '✅ Set' : '❌ Not set'}\n` +
+        `🤖 Auto-add: ${user.settings.autoAddVideos ? '✅ ON' : '❌ OFF'}\n` +
+        `🎯 Monitored: ${user.monitoredChannels.length} channels\n` +
+        `📦 Supply: ${user.videoSupply.length} videos\n` +
+        `📊 Today: ${user.dailyPosts} posts\n` +
+        `📈 Daily limit: ${user.dailyLimit === null ? 'Unlimited' : user.dailyLimit}\n` +
+        `🟢 Monitoring: ${user.settings.isMonitoring ? '🟢 Active' : '🔴 Stopped'}\n` +
+        `⏱️ Check: ${user.settings.monitorInterval}s | Delay: ${user.settings.postDelay}s`,
+        { parse_mode: 'Markdown' }
+    );
+});
+
+bot.command('startmonitor', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    if (!user.settings.youtubeApiKey) return ctx.reply('❌ Set API key first: /setapikey');
+    if (!user.settings.yourChannelId) return ctx.reply('❌ Set your channel first: /setchannel');
+    if (!user.settings.privateChannelId) return ctx.reply('❌ Set private channel first: /setprivate');
+    if (user.monitoredChannels.length === 0) return ctx.reply('❌ Add YouTube channels: /addchannel');
+    if (user.videoSupply.length === 0) return ctx.reply('⚠️ Supply empty! Upload videos to your private channel.');
+    user.settings.isMonitoring = true;
+    saveUserData();
+    await ctx.reply(`🟢 Monitoring started!\n\n📊 ${user.monitoredChannels.length} channels\n📦 ${user.videoSupply.length} videos\n⏱️ Check: ${user.settings.monitorInterval}s | Delay: ${user.settings.postDelay}s`);
+});
+
+bot.command('stopmonitor', async (ctx) => {
+    const user = initUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    user.settings.isMonitoring = false;
+    saveUserData();
+    await ctx.reply(`🔴 Monitoring stopped`);
+});
+
+bot.command('adminstats', async (ctx) => {
+    if (ADMIN_ID && ctx.from.id !== ADMIN_ID) return ctx.reply('❌ Admin only');
+    const stats = getUserStats();
+    let userList = '';
+    let count = 0;
+    for (const uid in userData) {
+        if (count++ >= 10) break;
+        const u = userData[uid];
+        userList += `${count}. \`${uid}\` | @${u.username || '?'} | 📦${u.videoSupply.length} | ${u.settings.isMonitoring ? '🟢' : '🔴'}\n`;
+    }
+    await ctx.reply(
+        `👥 *Bot Statistics*\n\n` +
+        `📊 Total users: ${stats.totalUsers}\n` +
+        `🟢 Active monitors: ${stats.activeUsers}\n` +
+        `🎯 Monitored channels: ${stats.totalMonitoredChannels}\n` +
+        `📦 Videos in supply: ${stats.totalVideosInSupply}\n` +
+        `📊 Total posts all time: ${stats.totalPostsAllTime}\n\n` +
+        `👤 *Recent Users:*\n${userList}`,
+        { parse_mode: 'Markdown' }
+    );
+});
+
+bot.command('broadcast', async (ctx) => {
+    if (ADMIN_ID && ctx.from.id !== ADMIN_ID) return ctx.reply('❌ Admin only');
+    const message = ctx.message.text.replace('/broadcast', '').trim();
+    if (!message) return ctx.reply('Usage: /broadcast Your message');
+    let sent = 0, failed = 0;
+    for (const uid in userData) {
+        try {
+            await ctx.telegram.sendMessage(parseInt(uid), `📢 *Announcement*\n\n${message}`, { parse_mode: 'Markdown' });
+            sent++;
+        } catch (e) { failed++; }
+        await new Promise(r => setTimeout(r, 50));
+    }
+    await ctx.reply(`✅ Sent: ${sent} | Failed: ${failed}`);
+});
+
+bot.launch()
+    .then(() => {
+        console.log('🤖 Bot started!');
+        console.log(`👥 Users: ${Object.keys(userData).length}`);
+        console.log(`👑 Admin ID: ${ADMIN_ID || 'Not set'}`);
+        monitorAllUsers(bot);
+        monitorPrivateChannels(bot);
+    })
+    .catch(err => console.error('Failed:', err));
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
