@@ -1,0 +1,16 @@
+{
+  "name": "youtube-telegram-bot",
+  "version": "1.0.0",
+  "description": "Auto-detect videos from private channel and post on YouTube Shorts",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "telegraf": "^4.15.3",
+    "googleapis": "^126.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
