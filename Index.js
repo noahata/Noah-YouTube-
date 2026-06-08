@@ -154,3 +154,130 @@ async function postYourVideo(bot, userId, channelId, videoTitle) {
         return false;
     }
       }
+async function checkChannel(bot, userId, channelId) {
+    const user = userData[userId];
+    if (!user || !user.settings.youtubeApiKey) return;
+    
+    const youtube = getUserYoutubeClient(user.settings.youtubeApiKey);
+    try {
+        const channelRes = await youtube.channels.list({ part: 'contentDetails', id: channelId });
+        if (!channelRes.data.items.length) return;
+        const playlistId = channelRes.data.items[0].contentDetails.relatedPlaylists.uploads;
+        const playlistRes = await youtube.playlistItems.list({ part: 'snippet', playlistId, maxResults: 1 });
+        if (!playlistRes.data.items.length) return;
+        
+        const latest = playlistRes.data.items[0];
+        const videoId = latest.snippet.resourceId.videoId;
+        const videoTitle = latest.snippet.title;
+        const videoRes = await youtube.videos.list({ part: 'contentDetails', id: videoId });
+        const duration = videoRes.data.items[0].contentDetails.duration;
+        const seconds = parseDuration(duration);
+        const isShort = seconds <= 60;
+        
+        if (!user.lastVideoIds[channelId]) user.lastVideoIds[channelId] = null;
+        const isNew = videoId !== user.lastVideoIds[channelId];
+        
+        if (isNew && isShort) {
+            user.lastVideoIds[channelId] = videoId;
+            console.log(`User ${userId}: New Short from ${channelId}: ${videoTitle}`);
+            
+            let canPost = true;
+            if (user.dailyLimit !== null && user.dailyPosts >= user.dailyLimit) canPost = false;
+            
+            if (user.videoSupply.length > 0 && canPost) {
+                await new Promise(resolve => setTimeout(resolve, user.settings.postDelay * 1000));
+                await postYourVideo(bot, userId, channelId, videoTitle);
+            }
+        }
+    } catch (error) {
+        console.error(`User ${userId}: Error:`, error.message);
+        if (error.message.includes('API key') && user.settings.yourChannelId) {
+            await bot.telegram.sendMessage(user.settings.yourChannelId, `❌ Invalid YouTube API key! Use /setapikey`);
+        }
+    }
+}
+
+function resetDailyCounters() {
+    const now = new Date();
+    const today = now.toDateString();
+    for (const userId in userData) {
+        if (userData[userId].lastPostDate !== today) {
+            userData[userId].dailyPosts = 0;
+            userData[userId].lastPostDate = today;
+        }
+    }
+    saveUserData();
+}
+
+async function monitorAllUsers(bot) {
+    console.log('🔍 Starting monitoring...');
+    while (true) {
+        resetDailyCounters();
+        for (const userId in userData) {
+            const user = userData[userId];
+            if (user.settings.isMonitoring && user.settings.youtubeApiKey && user.monitoredChannels.length > 0) {
+                for (const channelId of user.monitoredChannels) {
+                    await checkChannel(bot, userId, channelId);
+                }
+            }
+        }
+        await new Promise(resolve => setTimeout(resolve, 10000));
+    }
+}
+
+async function scanPrivateChannel(bot, userId) {
+    const user = userData[userId];
+    if (!user || !user.settings.privateChannelId) return;
+    if (!user.settings.autoAddVideos) return;
+    
+    try {
+        const messages = await bot.telegram.getChatHistory(user.settings.privateChannelId, { limit: 50 });
+        let newVideos = [];
+        
+        for (const msg of messages) {
+            if (user.lastProcessedMessageId && msg.message_id <= user.lastProcessedMessageId) continue;
+            
+            if (msg.video || (msg.document && msg.document.mimeType && msg.document.mimeType.startsWith('video/'))) {
+                const videoId = msg.message_id;
+                const title = msg.caption || null;
+                const alreadyExists = user.videoSupply.some(v => v.messageId === videoId);
+                
+                if (!alreadyExists) {
+                    newVideos.push({ messageId: videoId, title: title });
+                    console.log(`User ${userId}: Auto-detected video ${videoId}`);
+                }
+            }
+            
+            if (!user.lastProcessedMessageId || msg.message_id > user.lastProcessedMessageId) {
+                user.lastProcessedMessageId = msg.message_id;
+            }
+        }
+        
+        if (newVideos.length > 0) {
+            user.videoSupply.push(...newVideos);
+            saveUserData();
+            console.log(`User ${userId}: Auto-added ${newVideos.length} videos. Total: ${user.videoSupply.length}`);
+            
+            if (user.settings.yourChannelId) {
+                await bot.telegram.sendMessage(user.settings.yourChannelId, `📦 Auto-detected ${newVideos.length} new video(s)!\nTotal supply: ${user.videoSupply.length}`);
+            }
+        }
+    } catch (error) {
+        console.error(`User ${userId}: Error scanning:`, error.message);
+    }
+}
+
+async function monitorPrivateChannels(bot) {
+    console.log('🔍 Starting private channel monitoring...');
+    while (true) {
+        for (const userId in userData) {
+            const user = userData[userId];
+            if (user.settings.privateChannelId && user.settings.autoAddVideos) {
+                await scanPrivateChannel(bot, userId);
+            }
+        }
+        await new Promise(resolve => setTimeout(resolve, 30000));
+    }
+}
+
+const bot = new Telegraf(BOT_TOKEN);
