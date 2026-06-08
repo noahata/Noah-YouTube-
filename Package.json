@@ -1,7 +1,7 @@
 {
   "name": "youtube-telegram-bot",
   "version": "1.0.0",
-  "description": "Auto-detect videos from private channel and post on YouTube Shorts",
+  "description": "YouTube to Telegram Bot - Auto detect videos from private channel",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
